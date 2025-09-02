@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 <package>
 <comment>
+
 The vbac is not VBA compiler.
 Instead, this unsophisticated script frees VBA code from binary files.
 This script is distributed as part of the Ariawase library.
@@ -14,7 +15,7 @@ The Project Page: https://github.com/vbaidiot/Ariawase
 <example></example>
 </runtime>
 <resource id="HelpMessage">
-vbac (version 0.9.0)
+vbac (version 0.6.0)
 
 Usage: cscript vbac.wsf &lt;command&gt; [&lt;options&gt;]
 
@@ -48,12 +49,7 @@ var wdFormatXMLTemplateMacroEnabled = 15 //.dotm
 // XlFileFormat
 var xlExcel9795 = 43; //.xls 97-2003 format in Excel 2003 or prev
 var xlExcel8    = 56; //.xls 97-2003 format in Excel 2007
-var xlTemplate  = 17; //.xlt
-var xlAddIn     = 18; //.xla
-var xlExcel12   = 50; //.xlsb
 var xlOpenXMLWorkbookMacroEnabled = 52; //.xlsm
-var xlOpenXMLTemplateMacroEnabled = 53; //.xltm
-var xlOpenXMLAddIn                = 55; //.xlam
 
 // AcNewDatabaseFormat
 var acNewDatabaseFormatAccess2000 =  9; //.mdb
@@ -70,6 +66,16 @@ var acForm   = 2;
 var acReport = 3;
 var acMacro  = 4;
 var acModule = 5;
+
+// AcExport/Import/Link
+var acImport = 0;
+var acExport = 1;
+var acLink   = 2
+
+// AcImportXMLOption
+var acStructureOnly = 0;
+var acStructureAndData = 1;
+var acAppendData = 2;
 
 // vbext_ct_* (ref: http://msdn.microsoft.com/en-us/library/office/gg264162.aspx)
 var vbext_ct_StdModule   = 1;
@@ -510,7 +516,7 @@ Word.prototype.progID1 = "Word";
 Word.prototype.createOpenFile = function(wdApp, path) {
     var wdSaveFormat;
     var vernum = parseInt(wdApp.Version);
-    switch (fso.GetExtensionName(path).toLowerCase()) {
+    switch (fso.GetExtensionName(path)) {
     case 'doc':  wdSaveFormat = wdFormatDocument97;
                  break;
     case 'dot':  wdSaveFormat = wdFormatTemplate97;
@@ -595,24 +601,17 @@ Excel.prototype.progID1 = "Excel";
 Excel.prototype.createOpenFile = function(xlApp, path) {
     var xlFileFormat;
     var vernum = parseInt(xlApp.Version);
-    switch (fso.GetExtensionName(path).toLowerCase()) {
-    case 'xls':  xlFileFormat = (vernum < 12) ? xlExcel9795 : xlExcel8;
-                 break;
-    case 'xlt':  xlFileFormat = xlTemplate;
-                 break;
-    case 'xla':  xlFileFormat = xlAddIn;
-                 break;
-    case 'xlsb': xlFileFormat = xlExcel12;
-                 break;
-    case 'xlsm': xlFileFormat = xlOpenXMLWorkbookMacroEnabled;
-                 break;
-    case 'xltm': xlFileFormat = xlOpenXMLTemplateMacroEnabled;
-                 break;
-    case 'xlam': xlFileFormat = xlOpenXMLAddIn;
-                 break;
-    default:     xlFileFormat = (vernum < 12) ? xlExcel9795 : xlOpenXMLWorkbookMacroEnabled;
-                 path        += (vernum < 12) ? '.xls'      : '.xlsm';
-                 break;
+    switch (fso.GetExtensionName(path)) {
+    case 'xls':  case 'xla':  case 'xlt':
+        xlFileFormat = (vernum < 12) ? xlExcel9795 : xlExcel8;
+        break;
+    case 'xlsm': case 'xlam': case 'xltm':
+        xlFileFormat = xlOpenXMLWorkbookMacroEnabled;
+        break;
+    default:
+        xlFileFormat = (vernum < 12) ? xlExcel9795 : xlOpenXMLWorkbookMacroEnabled;
+        path        += (vernum < 12) ? '.xls'      : '.xlsm';
+        break;
     }
     
     var xlBook;
@@ -622,7 +621,6 @@ Excel.prototype.createOpenFile = function(xlApp, path) {
         }
         else {
             xlBook = xlApp.Workbooks.Add();
-            xlBook.IsAddin = (xlFileFormat == xlAddIn) || (xlFileFormat == xlOpenXMLAddIn);
             xlBook.SaveAs(path, xlFileFormat);
         }
     }
@@ -702,7 +700,7 @@ Access.prototype.progID1 = "Access";
 Access.prototype.createOpenFile = function(acApp, path) {
     var dbFormat;
     var vernum = parseInt(acApp.SysCmd(acSysCmdAccessVer));
-    switch (fso.GetExtensionName(path).toLowerCase()) {
+    switch (fso.GetExtensionName(path)) {
     case 'mdb':   dbFormat = acNewDatabaseFormatAccess2000;
                   break;
     case 'accdb': dbFormat = acNewDatabaseFormatAccess2007;
@@ -713,7 +711,11 @@ Access.prototype.createOpenFile = function(acApp, path) {
     }
     
     if (!fso.FileExists(path))
+	if (vernum < 12) {
+	acApp.NewCurrentDatabase(path);
+	}else{
         acApp.NewCurrentDatabase(path, dbFormat);
+	}
     else
         acApp.OpenCurrentDatabase(path);
     
@@ -757,6 +759,8 @@ Access.prototype.extensionTypeTable = (function() {
     tbl['frm'] = acForm;
     tbl['rpt'] = acReport;
     tbl['mcr'] = acMacro;
+    tbl['xml'] = acTable;
+    tbl['ltb'] = acTable;// is short name of "Linked Table"
     return tbl;
 })();
 Access.prototype.typeExtensionTable = (function() {
@@ -765,6 +769,7 @@ Access.prototype.typeExtensionTable = (function() {
     tbl[acForm]   = 'frm';
     tbl[acReport] = 'rpt';
     tbl[acMacro]  = 'mcr';
+    tbl[acTable]  = 'xml'; // rename 'ltb'is short name of "Linked Table"
     return tbl;
 })();
 Access.prototype.addTargetType = function(acTyp) {
@@ -782,7 +787,7 @@ Access.prototype.addTargetType = function(acTyp) {
 Access.prototype.iterAllObjects = function(acApp, action) {
     var i;
     var objs = new Array();
-    
+
     var acProj = acApp.CurrentProject;
     for (i = 0; i < acProj.AllModules.Count; i++) objs.push(acProj.AllModules.item(i));
     for (i = 0; i < acProj.AllForms.Count;   i++) objs.push(acProj.AllForms.item(i));
@@ -791,27 +796,12 @@ Access.prototype.iterAllObjects = function(acApp, action) {
     
     var acData = acApp.CurrentData;
     for (i = 0; i < acData.AllQueries.Count; i++) objs.push(acData.AllQueries.item(i));
-    
+    for (i = 0; i < acData.AllTables.Count; i++) {
+	if (acData.AllTables.item(i).Name.substr(0,4)!=="MSys")	objs.push(acData.AllTables.item(i));
+    }
     for (i = 0; i < objs.length; i++) {
         if (!!action(objs[i], i)) break;
     }
-};
-Access.prototype.getAcDocs = function(acApp) {
-    var acDb;
-    try {
-        acDb = acApp.CurrentDB();
-        var docs = new Array();
-        var conts = ['Modules', 'Forms', 'Reports', 'Scripts'];
-        var c2eTable = this.containerExtensionTable;
-        for (var i = 0; i < conts.length; i++) {
-            var cont = conts[i];
-            foreachEnum(acDb.Containers(cont).Documents, function(doc) {
-                docs.push({ container: cont, name: doc.Name });
-            });
-        }
-    } finally { if (acDb != null) acDb.Close(); }
-    
-    return docs;
 };
 Access.prototype.cleanupBinary = function(acProj, verbose) {
     var acApp = acProj.Application;
@@ -849,17 +839,84 @@ Access.prototype.importSource = function(impdir, acProj) {
         var fname = fso.GetFileName(path);
         var xname = fso.GetExtensionName(path);
         var bname = fso.GetBaseName(path);
+
         if (!(xname in self.extensionTypeTable)) return false;
-        
+
         var typ = self.extensionTypeTable[xname];
-        if (typ == acModule) {
+	switch (typ){
+	    case acModule:
             var c = compos.Import(path);
-            c.Name = bname;
-            acApp.DoCmd.Save(typ, bname);
-        }
-        else {
-            acApp.LoadFromText(typ, bname, path);
-        }
+                c.Name = bname;
+                acApp.DoCmd.Save(typ, bname);
+            break;
+	    case acTable:
+            if (xname == 'xml'){
+                    acApp.ImportXML (fso.BuildPath(impdir, bname + ".xml"),acStructureAndData);
+            }
+            if (xname == 'ltb'){
+                var acIOMode = 1;// ForReading
+                var acCreate = false; 
+                var acFormat = -1; // Unicode
+                var txtStream = fso.OpenTextFile(fso.BuildPath(impdir, bname + ".ltb"), acIOMode, acCreate, acFormat);
+
+                var dbType ="";
+                var dbName ="";
+                var dbSource ="";
+                var dbDestination = "";
+                var counter = 1;
+                while (txtStream.AtEndOfLine==false){
+                    switch (counter){
+                    case 1:
+                    dbType = txtStream.ReadLine();				   
+                    counter = counter + 1;
+                    break;
+                    case 2:
+                    dbName = txtStream.ReadLine();
+                    counter = counter + 1;
+                    break;
+                    case 3:
+                    dbSource = txtStream.ReadLine();
+                    counter = counter + 1;
+                    break;
+                    case 4:
+                    dbDestination = txtStream.ReadLine();
+                    counter = counter + 1;
+                    break;
+                    default:
+                    break;
+                    }
+                    if (counter > 4) {
+                    break;
+                    }
+                }
+                txtStream.Close();
+                txtStream = null;
+                acApp.DoCmd.TransferDatabase(acLink, dbType, dbName, acTable, dbSource, dbDestination, true, true);
+            }
+            break;
+        case acForm:
+        case acReport:
+            if (fso.FileExists(fso.BuildPath(impdir, fname + ".code"))){
+                var ts = fso.OpenTextFile(fso.BuildPath(impdir, fname), 1, false, -1);
+                var allText = ts.ReadAll();
+                ts.close();
+                ts = fso.OpenTextFile(fso.BuildPath(impdir, fname + ".code"), 1, false, -1);
+                allText += ts.ReadAll();
+                ts.close();
+                path = fso.BuildPath(impdir, fname + ".all");
+                var nts = fso.CreateTextFile(path, true, true);
+                nts.WriteLine(allText);
+                nts.Close();
+                acApp.LoadFromText(typ, bname, path);
+                fso.DeleteFile(path);
+            }else{
+                acApp.LoadFromText(typ, bname, path);
+            }
+            break
+	    default: 
+		    acApp.LoadFromText(typ, bname, path);
+	     	break;
+	}
         println("- Import: " + fname);
     });
 };
@@ -884,14 +941,141 @@ Access.prototype.exportSource = function(acProj, expdir) {
             }
         }
         
+	if (obj.Type == acTable) {
+            switch (acApp.CurrentDb().TableDefs.item(bname).Connect) {
+            case "": xname = 'xml'; break;
+            default: xname = 'ltb';break;
+            }
+        }
         var fname = bname + "." + xname;
-        var path  = fso.BuildPath(expdir, fname);
-        if (obj.Type == acModule)
-            compos(obj.Name).Export(path);
-        else
-            acApp.SaveAsText(obj.Type, bname, path);
-        
-        println("- Export: " + fname);
+	switch (xname){
+	case 'cls':
+        compos.item(bname).Export(fso.BuildPath(expdir, fname));
+        sjisToLower(fso.BuildPath(expdir, fname));
+        break;
+	case 'ltb':
+		var ts = fso.CreateTextFile(fso.BuildPath(expdir,bname + ".ltb"), true, true);
+		if (acApp.CurrentDb().TableDefs.item(bname).Connect.substr(0,4)=="ODBC"){
+		ts.WriteLine("ODBC");
+		ts.WriteLine(acApp.CurrentDb().TableDefs.item(bname).Connect);
+		}else{
+		ts.WriteLine("Microsoft Access");
+		var re = /;Database=/gi;
+		var cn= acApp.CurrentDb().TableDefs.item(bname).Connect;
+		ts.WriteLine(cn.replace(re,""));
+		}
+		ts.WriteLine(acApp.CurrentDb().TableDefs.item(bname).SourceTableName);
+		ts.WriteLine(acApp.CurrentDb().TableDefs.item(bname).Name);
+		ts.Close();
+		break;
+	case 'xml':
+		var xml = fso.BuildPath(expdir, fname);
+		var xsd = fso.BuildPath(expdir, bname + ".xsd");
+		acApp.ExportXML(0, bname, xml, xsd, "", "", 0, 32);
+
+		// Load xml text 
+		var ts = WScript.CreateObject("ADODB.Stream");
+	    ts.Charset = 'UTF-8';
+	    ts.Open();
+		ts.LoadFromFile(xml);
+		var allText = "";
+		var counter =0;
+		while (!ts.EOS){
+		  var lineText = ts.ReadText(-2);//-2:adreadLine
+		  counter += 1;
+		  if (counter == 2) {
+		  allText += '<dataroot xmlns:od="urn:schemas-microsoft-com:officedata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"  xsi:noNamespaceSchemaLocation="' + bname + '.xsd" >' + '\n';
+		  }else{
+		  allText += lineText + '\n'; 
+		  }
+		}
+		ts.Close();
+		if (counter == 2){
+			allText += '</dataroot>'; 
+		}
+
+		// Prepare text
+		var pre = WScript.CreateObject("ADODB.Stream");
+		pre.Type = 2; // 2:adTypeText
+		pre.Charset = "UTF-8";
+		pre.Open();
+		pre.WriteText(allText);
+		pre.Position = 0;
+		pre.Type = 1; // 1:adTypeBinary
+		pre.Position = 3;// Skip "BOM"
+		var bin = pre.Read();
+		pre.Close();
+
+		// write text and save file
+		var stm = WScript.CreateObject("ADODB.Stream");
+		stm.Type = 1; // 2:adTypeBinary
+		stm.Open();
+		stm.Write(bin);
+		stm.SaveToFile(xml, 2);// 2:adSaveCreateOverWrite
+		stm.Close();
+
+		break;
+	
+	case 'frm':
+	case 'rpt':
+		acApp.SaveAsText(obj.Type, bname, fso.BuildPath(expdir, fname));
+		var ts = fso.OpenTextFile(fso.BuildPath(expdir, fname), 1, false, -1);
+		var allText = "";
+        var codeText = "";
+        var beginCodeText = false;
+		var counter =0;
+		while (!ts.AtEndOfStream){
+		  var lineText = ts.ReadLine();
+		  counter += 1;
+		  if (counter == 1) {
+			  allText += lineText;
+		  }
+		  if (counter >  1) {
+            if (!beginCodeText){
+                allText += '\n';
+                if (lineText.length >= 28){
+                    if (lineText.substring(0,28) == "Attribute VB_Exposed = False"){
+                        allText += "Attribute VB_Exposed = False"
+                        if (lineText.length > 28){
+                            codeText += lineText.substring(28, lineText.length - 28); 
+                        }
+                        beginCodeText = true;
+                    }else{
+                        allText += lineText
+                    }
+                }else{
+                    allText += lineText
+                }
+            }else{
+                if (codeText.length > 0){
+                    codeText += '\n';
+                }
+                codeText += lineText;
+            }
+		  }
+		}
+		ts.Close();
+		var nts = fso.CreateTextFile(fso.BuildPath(expdir, fname), true, true);
+		nts.WriteLine(allText);
+        nts.Close();
+        if (beginCodeText){
+            nts = fso.CreateTextFile(fso.BuildPath(expdir, fname + ".code"), true, true);
+            nts.WriteLine(codeText);
+            nts.Close();
+            unicodeToLower(fso.BuildPath(expdir, fname + ".code"), true);
+        }
+        break;
+
+	case 'bas':
+		acApp.SaveAsText(obj.Type, bname, fso.BuildPath(expdir, fname));		
+        sjisToLower(fso.BuildPath(expdir, fname));
+        break;
+
+    default:
+		acApp.SaveAsText(obj.Type, bname, fso.BuildPath(expdir, fname));		
+		break;
+	}
+	println("- Export: " + fname);
     });
 };
 Access.prototype.compact = function(dbPath, acApp) {
@@ -991,38 +1175,15 @@ Command.prototype.decombine = function() {
     var conf = hlp.config;
     hlp.combineImpl(conf.bin, conf.src, function() { return conf.getBins(); });
 };
-Command.prototype.clear = function() {
+Command.prototype.clear = function clear() {
     var hlp  = this.__helper;
     var conf = hlp.config;
     hlp.iterTarget(
         function() { return conf.getBins(); },
         function(path) {
             var office = hlp.createOffice(path);
-            office.clear(path);
-        });
-};
-Command.prototype.acdoc = function() {
-    var hlp  = this.__helper;
-    var conf = hlp.config;
-    
-    hlp.iterTarget(
-        function() { return conf.getBins(); },
-        function(path) {
-            if (hlp.getAppName(path) != 'Access') return false;
-            
-            println("> Target: " + fso.GetFileName(path));
-            var docs;
-            var acc = hlp.createOffice(path);
-            acc.loanOfAcProj(path, true, function(acProj) {
-                var acApp = acProj.Application;
-                docs = acc.getAcDocs(acApp);
-            });
-            
-            for (var i = 0; i < docs.length; i++) {
-                var doc = docs[i];
-                println("- " + doc.container + ": " + doc.name);
-            }
-            println();
+            var param  = hlp.parameter;
+            office[param.commandType](path);
         });
 };
 
@@ -1031,33 +1192,19 @@ var CommandHelper = function(param) {
     this.config  = new Config(param.binary, param.source, param.binbak);
     this.command = new Command(this);
 };
-CommandHelper.prototype.getAppName = function(fname) {
-    switch (fso.GetExtensionName(fname).toLowerCase()) {
-    case 'doc': case 'dot': case 'docm': case 'dotm':
-        return 'Word';
-    case 'xls': case 'xlsm': case 'xla': case 'xlam': case 'xlt': case 'xltm': case 'xlsb':
-        return 'Excel';
-    case 'otm':
-        return 'Outlook';
-    case 'mdb': case 'accdb':
-        return 'Access';
-    default:
-        return undefined;
-    }
-};
 CommandHelper.prototype.createOffice = function(fname) {
     var office;
-    switch (this.getAppName(fname)) {
-    case 'Word':
+    switch (fso.GetExtensionName(fname)) {
+    case 'doc': case 'dot': case 'docm': case 'dotm':
         office = new Word();
         break;
-    case 'Excel':
+    case 'xls': case 'xlsm': case 'xla': case 'xlam': case 'xlt': case 'xltm':
         office = new Excel();
         break;
-    case 'Outlook':
+    case 'otm':
         office = new Outlook();
         break;
-    case 'Access':
+    case 'mdb': case 'accdb':
         office = new Access();
         if (this.parameter.incQuery) office.addTargetType(acQuery);
         break;
@@ -1133,11 +1280,87 @@ function main(args) {
         .parse(args);
     
     // It's guard for internal impl. If necessary, you can comment out to enable this feature.
-    param.binbak.flag = false;
-    param.incQuery = false;
+    param.binbak.flag = true;
+    param.incQuery = true;
     
     var h = new CommandHelper(param);
     h.runCommand();
+}
+function unicodeToLower(path) {
+   	var ts = fso.OpenTextFile(path, 1, false, -1);
+    var allText = "";
+    while (!ts.AtEndOfStream){
+        var lineText = ts.ReadLine();
+        var isChange = true;
+        var row = '';
+        for (i = 0; i < lineText.length; i++){
+            var v = lineText.substring(i, i+1);
+            if (v =='"'){
+            isChange = !isChange;
+            }
+            if (isChange){
+                v = v.toLowerCase();
+            }
+            row += v;
+        }
+        if (allText.length > 0){
+            allText += '\r\n';
+        }
+        allText += row;
+    }
+    ts.Close();
+
+    var nts = fso.CreateTextFile(path, true, true);
+    nts.WriteLine(allText);
+    nts.Close();
+}
+function sjisToLower(path) {
+
+    var ts = WScript.CreateObject("ADODB.Stream");
+	    ts.Charset = 'shift_jis';
+	    ts.Open();
+		ts.LoadFromFile(path);
+		
+    var allText = "";
+    while (!ts.EOS){
+        var lineText = ts.ReadText(-2); //-2:adreadLine
+        var isChange = true;
+        var row = '';
+        for (i = 0; i < lineText.length; i++){
+            var v = lineText.substring(i, i+1);
+            if (v =='"'){
+                isChange = !isChange;
+            }
+            if (isChange){
+                v = v.toLowerCase();
+            }
+            row += v;
+        }
+        if (allText.length > 0){
+            allText += '\r\n';
+        }
+        allText += row;
+    }
+    ts.Close();
+
+    // Prepare text
+    var pre = WScript.CreateObject("ADODB.Stream");
+    pre.Type = 2; // 2:adTypeText
+    pre.Charset = "shift_jis";
+    pre.Open();
+    pre.WriteText(allText);
+    pre.Position = 0;
+    pre.Type = 1; // 1:adTypeBinary
+    //pre.Position = 3;// Skip "BOM"
+    var bin = pre.Read();
+    pre.Close();
+
+    var stm = WScript.CreateObject("ADODB.Stream");
+    stm.Type = 1; // 2:adTypeBinary
+    stm.Open();
+    stm.Write(bin);
+    stm.SaveToFile(path, 2);// 2:adSaveCreateOverWrite
+    stm.Close();
 }
 
 main(args);
