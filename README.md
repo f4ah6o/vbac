@@ -47,3 +47,7 @@ Coming soon! Please check back.
 ## License
 
 This software is released under the MIT License, see [LICENSE.txt](./LICENSE.txt).
+
+## 参考
+
+https://qiita.com/nonoshu/items/a610a3dfcc73514944d2
